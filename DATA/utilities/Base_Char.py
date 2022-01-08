@@ -3,6 +3,7 @@ from math import cos,sin,pi
 from copy import deepcopy
 
 from DATA.utilities.Animations import get_sprite
+from DATA.utilities.Sound_manager import playsound
 
 from DATA.assets.Misc import Dash_Smoke, Double_Jump
 
@@ -32,7 +33,7 @@ class Hitbox():
         self.deflect = deflect
         self.modifier = modifier
         self.boum = boum
-        self.sound = pygame.mixer.Sound("DATA/Musics/SE/"+sound)
+        self.sound = "DATA/Musics/SE/"+sound
         if not own.look_right :
             self.relativex = change_left(x,sizex)
             self.angle = pi - angle
@@ -76,7 +77,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
 
         self.collidegroup = pygame.sprite.GroupSingle() # Groupe de collision (spécial à pygame)
         self.collidegroup.add(self)
-        self.jumpsound = pygame.mixer.Sound("DATA/Musics/SE/jump.wav")  # Son test, peut être modifié via <Personnage>.py
+        self.jumpsound = "DATA/Musics/SE/jump.wav"  # Son test, peut être modifié via <Personnage>.py
 
         self.frame = 0              # Frames écoulées depuis le début de la précédente action
         self.attack = None          # Attaque en cours
@@ -122,10 +123,13 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
         self.double_jump = list()
 
         self.combo = 0
+        self.truecombo = 0
         self.combodamages = 0
 
         self.immune_to_projectiles = []
         self.die = 0
+
+        self.crouch = 0
 
     def inputattack(self,attack):
         if self.attack != attack :
@@ -146,6 +150,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
         return False # cancel, pour Reignaud
 
     def act(self, inputs,stage,other,continuer):
+        print("before",self.animation)
         if self.die > 0 and continuer:
             self.move(stage)
             self.special(inputs)
@@ -158,6 +163,8 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
             self.active_hitboxes = list()
             return
         if continuer :
+            if not (self.lag or self.hitstun) :
+                self.truecombo = 0
             if self.attack is None :
                 self.lag = max(0,self.lag-1)
             self.hitstun = max(0, self.hitstun-1)
@@ -179,11 +186,16 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                 self.charge = 0
         else :
             self.BOUM = max(0,self.BOUM-1)
+        print("after",self.animation)
         
 
 
     def get_inputs(self, inputs, stage, other, cancel): # Cancel spécial pour reignaud (pour pas avoir à tout copier coller)
         self.direction = 90 if self.look_right else -90
+        if self.crouch > -10 and self.crouch != 0:
+            self.crouch -= 1
+        else :
+            self.crouch = 0
 
         if self.tech > 0 :
             self.tech -= 1
@@ -246,6 +258,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                     self.lenght_parry = 0
             if shield and (not self.grounded) and (self.can_airdodge) and self.attack is None and self.can_act and not self.jumping:
                 self.animation = "airdodge"
+                self.animeframe = 0
                 self.can_airdodge = False
                 self.airdodge = True
                 self.dodgex = (right-left)*self.airdodgespeed
@@ -324,7 +337,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                             self.vy = -self.fullhop # il utilise son premier saut
                         else :
                             self.vy = -self.shorthop # il utilise son premier saut
-                        self.jumpsound.play() # joli son
+                        playsound(self.jumpsound) # joli son
 
                     else:  # Si le personnage est en l'air
                         self.fastfall = False  # il cesse de fastfall
@@ -332,7 +345,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                             self.animeframe = 0
                             self.tumble = False
                             self.jumping = True
-                            self.jumpsound.play()  # joli son
+                            playsound(self.jumpsound)  # joli son
                             self.vy = -self.doublejumpheight # il saute
                             self.double_jump.append(Double_Jump(self.rect.x+self.rect.w/2,self.rect.y+self.rect.h/2))
 
@@ -347,8 +360,16 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                             self.inputattack("DownTilt")
                         else :
                             self.inputattack("DownAir")
-                    if special :
+                    elif special :
                         self.inputattack("DownB")
+                    else :
+                        if self.crouch == 0 :
+                            self.crouch = -1
+                        if self.crouch > 1 :
+                            self.crouch = 16
+                else :
+                    if self.crouch <= -1 :
+                        self.crouch = 8
 
                 if not (left or right or up or down):
                     if special :
@@ -424,7 +445,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
         if rect.colliderect(stage.mainplat.rect):
             return True
         for p in stage.plats:
-            if rect.colliderect(p.rect) and rect.y + rect.h < p.rect.y+self.vy+3:
+            if rect.colliderect(p.rect) and rect.y + rect.h < p.rect.y+self.vy+4 and self.crouch < 9:
                 return True
         return False
 
@@ -561,9 +582,10 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
         for i,hitbox in enumerate(other.active_hitboxes): # Détection des hitboxes
             if self.rect.colliderect(hitbox.hit):
                 if (not self.parry) and (not self.intangibility): # Parry
-                    if not (self.lag or self.hitstun) :
+                    if self.truecombo == 0:
                         self.combo = 0
                         self.combodamages = 0
+                    self.truecombo += 1
                     self.combo += 1
                     self.combodamages += hitbox.damages
                     if hitbox.position_relative : # Reverse hit
@@ -597,7 +619,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                         self.parried = True
                         other.attack = None
                         other.lag = min(hitbox.damages*hitbox.knockback/10,9)
-                hitbox.sound.play()
+                playsound(hitbox.sound)
                 del other.active_hitboxes[i] # Supprime la hitbox
                 return
         for i,projectile in enumerate(other.projectiles): # Détection des projectiles
@@ -611,9 +633,10 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
             if self.rect.colliderect(projectile.rect) and projectile not in self.immune_to_projectiles:
                 if (not self.parry) and (not self.intangibility) : # Parry
                     self.immune_to_projectiles.append(projectile)
-                    if not (self.lag or self.hitstun) :
+                    if self.truecombo == 0:
                         self.combo = 0
                         self.combodamages = 0
+                    self.truecombo += 1
                     self.combo += 1
                     self.combodamages += projectile.damages
                     knockback = projectile.knockback*(self.damages*projectile.damages_stacking+1)
@@ -638,7 +661,7 @@ class Char(pygame.sprite.Sprite):  # Personnage de base, possédant les caracté
                     try :
                         projectile.sound.play()
                     except:
-                        pygame.mixer.Sound("DATA/Musics/SE/hits and slap/8bit hit.mp3").play()
+                        playsound("DATA/Musics/SE/hits and slap/8bit hit.mp3")
                 else :
                     if self.parry :
                         other.BOUM = 8
